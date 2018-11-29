@@ -8,13 +8,12 @@
 struct file *file_open(const char *path, int flags, int rights)
 {
 	struct file *fp = NULL;
-	struct cred *cred;
 	mm_segment_t old_fs;
 	int err = 0;
 
 	old_fs = get_fs();
 	set_fs(get_ds());
-	vfs_open(path, fp, cred);
+	fp = filp_open(path, O_RDONLY, 0644);
 	set_fs(old_fs);
 	
 	if (IS_ERR(fp)) {
@@ -31,7 +30,7 @@ static int list_modules(struct file *fp, unsigned long long offset, unsigned cha
 	mm_segment_t old_fs = get_fs();
 
 	set_fs(get_ds());
-	ret = vfs_read(fp, data, size, &offset);
+	ret = kernel_read(fp, offset, data, size);
 	
 	set_fs(old_fs);
 	return ret;
@@ -39,19 +38,20 @@ static int list_modules(struct file *fp, unsigned long long offset, unsigned cha
 
 static int __init list_main(void)
 {
-	struct filep *filp;
-	char buf[1024];
+	struct file *filp;
+	char buf[2048];
 	int err;
   
 	filp = file_open("/proc/modules", O_RDONLY, 0);
 
-	err = list_modules(filp, 0, buf, 1024);
+	err = list_modules(filp, 0, buf, 2048);
 
-	if (err < 1024)
-		printk(KERN_DEBUG"File reading error\n");
+	if (err == 0)
+		printk(KERN_DEBUG "File reading error or file is empty\n");
 
 	printk(KERN_INFO "%s \n", buf);
-  
+
+	filp_close(filp, NULL);
   
 	return 0;
 }
