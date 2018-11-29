@@ -4,7 +4,6 @@
 #include <linux/init.h>
 #include <linux/syscalls.h>
 #include <asm/uaccess.h>
-#include "fs/internal.h"
 
 struct file *file_open(const char *path, int flags, int rights)
 {
