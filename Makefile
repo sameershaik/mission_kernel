@@ -1,4 +1,4 @@
-obj-m += list_modules.o
+obj-m += list_modules_v2.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build/ M=$(PWD) modules
