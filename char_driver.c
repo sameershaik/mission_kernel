@@ -4,53 +4,181 @@
 #include <linux/fs.h>
 #include <linux/kdev_t.h>
 #include <linux/cdev.h>
+#include <linux/device.h>
+#include <asm/uaccess.h>
+#include "char_driver.h"
 
-static int my_char_major = 0;
-static int my_char_minor = 0;
+#define DEV_NAME "my_char_driver"
+#define CLS_NAME "my_char_class"
+
+
+
+static unsigned long buf_size = 1024;
+static unsigned long block_size = 512;
+static struct class *char_class = NULL;
+static struct device *char_dev = NULL;
+
+static int char_major = 0;
+static int char_minor = 0;
+
+static int number_opens = 0;
 
 static dev_t dev;
+static struct char_device *my_dev;
 
-struct my_char {
-	struct cdev cdev;
-	char buff[128];
-	unsigned long size;
+static int char_open(struct inode *inode, struct file *filp)
+{
+	struct char_device *cl_dev;
+
+	cl_dev = container_of(inode->i_cdev, struct char_device, cdev);
+
+	filp->private_data = cl_dev;
+	
+	number_opens++;
+
+	return 0;
+}
+
+static int char_release(struct inode *inode, struct file *filp)
+{
+	number_opens--;
+
+	if (number_opens == 0) 
+		printk(KERN_WARNING"closing the file completely\n");
+
+	return 0;
+}
+
+static ssize_t char_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
+{
+	struct char_device *cl_dev = (struct char_device *) filp->private_data;
+
+	ssize_t ret = 0;
+
+	if (*f_pos >= cl_dev->buf_size) {
+		printk(KERN_WARNING" offest is out of bounds\n");
+		return ret;
+	}
+
+	if (*f_pos + count > cl_dev->buf_size) 
+		count = cl_dev->buf_size - *f_pos;
+	if (copy_to_user(buf, &(cl_dev->message[*f_pos]), count) != 0) {
+		ret = -EFAULT;
+		return ret;
+	}
+
+	*f_pos += count;
+	ret = count;
+
+	return ret;
+}
+static ssize_t char_write(struct file *filp, const char *__user buf, size_t count, loff_t *f_pos)
+{
+	struct char_device *cl_dev = (struct char_device *) filp->private_data;
+
+	ssize_t ret = 0;
+
+	if (*f_pos >= cl_dev->buf_size) {
+		printk(KERN_WARNING" offest is out of bounds\n");
+		return ret;
+	}
+
+	if (*f_pos + count > cl_dev->buf_size) 
+		count = cl_dev->buf_size - *f_pos;
+
+	if (count > cl_dev->block_size)
+		count = cl_dev->block_size;
+
+	if(copy_from_user(&(cl_dev->message[*f_pos]), buf, count) != 0)
+	{
+		ret = -EFAULT;
+		return ret;
+	}
+	
+	*f_pos += count;
+	ret = count;
+
+	return ret;
+		
+}
+struct file_operations my_char_fops = {
+	.open = char_open,
+	.read = char_read,
+	.write = char_write,
+	.release = char_release
 };
 
-/* struct file_operations my_char_fops = { */
-/* 	.OWNER = THIS_MODULE, */
-/* 	.open = char_dev_open, */
-/* 	.close = char_dev_close, */
-/* 	.read = char_dev_read, */
-/* 	.write = char_dev_write, */
-/* 	.release = char_dev_release */
-/* }; */
-
 	
-static int __init char_init(void)
+static int  char_init(void)
 {
 	int res;
+	dev_t devno;
+	
+	
 	printk(KERN_INFO"hello world \n");
-	if (my_char_major) {
-		dev = MKDEV(my_char_major, my_char_minor);
-		res = register_chrdev_region(dev, 1, "my_char_driver");
+	if (char_major) {
+		dev = MKDEV(char_major, char_minor);
+		res = register_chrdev_region(dev, 1, DEV_NAME);
 	} else {
-		res = alloc_chrdev_region(&dev, my_char_minor, 0, "my_char_driver");
-		my_char_major = MAJOR(dev);
+		res = alloc_chrdev_region(&dev, char_minor, 0, DEV_NAME);
+		char_major = MAJOR(dev);
 	}
 	if (res < 0) {
 		printk(KERN_INFO"My char driver didn't got the major number\n");
 		return res;
 	}
-	printk(KERN_INFO"My char driver major is %d \n", my_char_major);
+	printk(KERN_INFO"My char driver major is %d \n", char_major);
 	return 0;
+
+	char_class = class_create(THIS_MODULE, CLS_NAME);
+
+	if (IS_ERR(char_class)) {
+		printk(KERN_ALERT"failde to register class\n");
+		unregister_chrdev_region(char_major, 1);
+		printk(KERN_ALERT"failed to register char class");
+		return PTR_ERR(char_class);
+	}
+
+	devno = MKDEV(char_major, char_minor);
+
+	cdev_init(&my_dev->cdev, &my_char_fops);
+
+	my_dev->cdev.owner = THIS_MODULE;
+
+	res = cdev_add(&my_dev->cdev, devno, 1);
+
+	if (res) {
+		printk(KERN_WARNING" UNABLE TO ADD THE CHAR DEVICE\n");
+		return res;
+	}
+	my_dev->buf_size = buf_size;
+	my_dev->block_size = block_size;
+	char_dev = device_create(char_class, NULL, dev, 0, NULL);
+
+	if (IS_ERR(char_dev)) {
+		printk(KERN_ALERT"unable to create the charatcer device\n");
+		cdev_del(&my_dev->cdev);
+		class_destroy(char_class);
+		unregister_chrdev_region(char_major, 1);
+		return PTR_ERR(char_dev);
+	}
+
+	return 0;
+	
 }
 
-static void __exit char_clean(void)
+static void  char_clean(void)
 {
-	unregister_chrdev_region(my_char_major, 1);
+	device_destroy(char_class, dev);
+	class_unregister(char_class);
+	class_destroy(char_class);
+	unregister_chrdev_region(char_major, 1);
 	printk(KERN_INFO"Bybye\n");
 }
 
 module_init(char_init);
 module_exit(char_clean);
   
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("a small char driver");
+
