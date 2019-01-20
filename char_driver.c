@@ -7,6 +7,8 @@
 #include <linux/device.h>
 #include <asm/uaccess.h>
 #include "char_driver.h"
+#include <linux/types.h>
+#include <linux/device.h>
 
 #define DEV_NAME "my_char_driver"
 #define CLS_NAME "my_char_class"
@@ -24,6 +26,7 @@ static int char_minor = 0;
 static int number_opens = 0;
 
 static dev_t dev;
+
 static struct char_device *my_dev;
 
 static int char_open(struct inode *inode, struct file *filp)
@@ -94,6 +97,7 @@ static ssize_t char_write(struct file *filp, const char *__user buf, size_t coun
 		ret = -EFAULT;
 		return ret;
 	}
+
 	
 	*f_pos += count;
 	ret = count;
@@ -101,6 +105,7 @@ static ssize_t char_write(struct file *filp, const char *__user buf, size_t coun
 	return ret;
 		
 }
+
 struct file_operations my_char_fops = {
 	.open = char_open,
 	.read = char_read,
@@ -163,12 +168,14 @@ static int  char_init(void)
 		return PTR_ERR(char_dev);
 	}
 
+
 	return 0;
 	
 }
 
 static void  char_clean(void)
 {
+	cdev_del(&my_dev->cdev);
 	device_destroy(char_class, dev);
 	class_unregister(char_class);
 	class_destroy(char_class);
@@ -181,4 +188,5 @@ module_exit(char_clean);
   
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("a small char driver");
+
 
