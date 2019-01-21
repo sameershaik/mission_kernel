@@ -5,7 +5,8 @@
 #include <linux/kdev_t.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 #include "char_driver.h"
 #include <linux/types.h>
 #include <linux/device.h>
@@ -31,11 +32,10 @@ static struct char_device *my_dev;
 
 static int char_open(struct inode *inode, struct file *filp)
 {
-	struct char_device *cl_dev;
+	
+	my_dev = container_of(inode->i_cdev, struct char_device, cdev);
 
-	cl_dev = container_of(inode->i_cdev, struct char_device, cdev);
-
-	filp->private_data = cl_dev;
+	filp->private_data = my_dev;
 	
 	number_opens++;
 
@@ -54,18 +54,19 @@ static int char_release(struct inode *inode, struct file *filp)
 
 static ssize_t char_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
-	struct char_device *cl_dev = (struct char_device *) filp->private_data;
+	my_dev = (struct char_device *) filp->private_data;
 
 	ssize_t ret = 0;
 
-	if (*f_pos >= cl_dev->buf_size) {
+	if (*f_pos >= my_dev->buf_size) {
 		printk(KERN_WARNING" offest is out of bounds\n");
 		return ret;
 	}
 
-	if (*f_pos + count > cl_dev->buf_size) 
-		count = cl_dev->buf_size - *f_pos;
-	if (copy_to_user(buf, &(cl_dev->message[*f_pos]), count) != 0) {
+	if (*f_pos + count > my_dev->buf_size) 
+		count = my_dev->buf_size - *f_pos;
+	
+	if (copy_to_user(buf, &(my_dev->message[*f_pos]), count) != 0) {
 		ret = -EFAULT;
 		return ret;
 	}
@@ -77,22 +78,22 @@ static ssize_t char_read(struct file *filp, char __user *buf, size_t count, loff
 }
 static ssize_t char_write(struct file *filp, const char *__user buf, size_t count, loff_t *f_pos)
 {
-	struct char_device *cl_dev = (struct char_device *) filp->private_data;
+	my_dev = (struct char_device *) filp->private_data;
 
 	ssize_t ret = 0;
 
-	if (*f_pos >= cl_dev->buf_size) {
+	if (*f_pos >= my_dev->buf_size) {
 		printk(KERN_WARNING" offest is out of bounds\n");
 		return ret;
 	}
 
-	if (*f_pos + count > cl_dev->buf_size) 
-		count = cl_dev->buf_size - *f_pos;
+	if (*f_pos + count > my_dev->buf_size) 
+		count = my_dev->buf_size - *f_pos;
 
-	if (count > cl_dev->block_size)
-		count = cl_dev->block_size;
+	if (count > my_dev->block_size)
+		count = my_dev->block_size;
 
-	if(copy_from_user(&(cl_dev->message[*f_pos]), buf, count) != 0)
+	if(copy_from_user(&(my_dev->message[*f_pos]), buf, count) != 0)
 	{
 		ret = -EFAULT;
 		return ret;
@@ -133,22 +134,29 @@ static int  char_init(void)
 		return res;
 	}
 	printk(KERN_INFO"My char driver major is %d \n", char_major);
-	return 0;
 
 	char_class = class_create(THIS_MODULE, CLS_NAME);
 
 	if (IS_ERR(char_class)) {
-		printk(KERN_ALERT"failde to register class\n");
 		unregister_chrdev_region(char_major, 1);
 		printk(KERN_ALERT"failed to register char class");
 		return PTR_ERR(char_class);
 	}
 
+	my_dev = (struct char_device *)kzalloc(sizeof(struct char_device), GFP_KERNEL);
+
+	if (my_dev == NULL) {
+		res = -ENOMEM;
+		printk(KERN_ALERT"no memory allocated for the device\n");
+		return res;
+	}
+		
 	devno = MKDEV(char_major, char_minor);
 
 	cdev_init(&my_dev->cdev, &my_char_fops);
 
 	my_dev->cdev.owner = THIS_MODULE;
+	my_dev->cdev.ops = &my_char_fops;
 
 	res = cdev_add(&my_dev->cdev, devno, 1);
 
@@ -158,7 +166,7 @@ static int  char_init(void)
 	}
 	my_dev->buf_size = buf_size;
 	my_dev->block_size = block_size;
-	char_dev = device_create(char_class, NULL, dev, 0, NULL);
+	char_dev = device_create(char_class, NULL, devno, NULL, DEV_NAME);
 
 	if (IS_ERR(char_dev)) {
 		printk(KERN_ALERT"unable to create the charatcer device\n");
@@ -180,6 +188,7 @@ static void  char_clean(void)
 	class_unregister(char_class);
 	class_destroy(char_class);
 	unregister_chrdev_region(char_major, 1);
+	kfree(my_dev);
 	printk(KERN_INFO"Bybye\n");
 }
 
