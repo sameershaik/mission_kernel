@@ -17,7 +17,7 @@
 
 
 static unsigned long buf_size = 1024;
-static unsigned long block_size = 512;
+static unsigned long block_size = 1024;
 static struct class *char_class = NULL;
 static struct device *char_dev = NULL;
 
@@ -32,75 +32,78 @@ static struct char_device *my_dev;
 
 static int char_open(struct inode *inode, struct file *filp)
 {
-	
-	my_dev = container_of(inode->i_cdev, struct char_device, cdev);
+	struct char_device *cl_dev;
 
-	filp->private_data = my_dev;
-	
-	number_opens++;
+	cl_dev = container_of(inode->i_cdev, struct char_device, cdev);
 
+	filp->private_data = cl_dev;
+	
 	return 0;
 }
 
 static int char_release(struct inode *inode, struct file *filp)
 {
-	number_opens--;
-
-	if (number_opens == 0) 
-		printk(KERN_WARNING"closing the file completely\n");
-
 	return 0;
 }
 
 static ssize_t char_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
-	my_dev = (struct char_device *) filp->private_data;
+	struct char_device *cl_dev;
+	cl_dev = (struct char_device *) filp->private_data; 
 
 	ssize_t ret = 0;
+	*f_pos = 0;
+	
+	printk("The count is %d, offset is %d", count, *f_pos);
 
-	if (*f_pos >= my_dev->buf_size) {
+	if (*f_pos >= cl_dev->buf_size) {
 		printk(KERN_WARNING" offest is out of bounds\n");
 		return ret;
 	}
 
-	if (*f_pos + count > my_dev->buf_size) 
-		count = my_dev->buf_size - *f_pos;
+	if (*f_pos + count > cl_dev->buf_size) 
+		count = cl_dev->buf_size - *f_pos;
 	
-	if (copy_to_user(buf, &(my_dev->message[*f_pos]), count) != 0) {
+	if (copy_to_user(buf, &(cl_dev->message[*f_pos]), count) != 0) {
 		ret = -EFAULT;
 		return ret;
 	}
 
 	*f_pos += count;
+	printk("The f_pos is %d\n", *f_pos);
 	ret = count;
 
 	return ret;
 }
 static ssize_t char_write(struct file *filp, const char *__user buf, size_t count, loff_t *f_pos)
 {
-	my_dev = (struct char_device *) filp->private_data;
+	struct char_device *cl_dev;
+	cl_dev = (struct char_device *) filp->private_data; 
 
 	ssize_t ret = 0;
 
-	if (*f_pos >= my_dev->buf_size) {
+	printk("The count is %d, offset is %d", count, *f_pos);
+	if (*f_pos >= cl_dev->buf_size) {
 		printk(KERN_WARNING" offest is out of bounds\n");
 		return ret;
 	}
 
-	if (*f_pos + count > my_dev->buf_size) 
-		count = my_dev->buf_size - *f_pos;
+	if (*f_pos + count > cl_dev->buf_size) 
+		count = cl_dev->buf_size - *f_pos;
 
-	if (count > my_dev->block_size)
-		count = my_dev->block_size;
+	if (count > cl_dev->block_size)
+		count = cl_dev->block_size;
 
-	if(copy_from_user(&(my_dev->message[*f_pos]), buf, count) != 0)
+	if(copy_from_user(&(cl_dev->message[*f_pos]), buf, count) != 0)
 	{
 		ret = -EFAULT;
 		return ret;
 	}
 
 	
+	
 	*f_pos += count;
+	printk("The f_pos is %d\n", *f_pos);
 	ret = count;
 
 	return ret;
