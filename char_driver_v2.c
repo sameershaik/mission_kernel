@@ -14,9 +14,6 @@
 #define DEV_NAME "my_char_driver"
 #define CLS_NAME "my_char_class"
 
-
-
-static unsigned long buf_size;
 static struct class *char_class = NULL;
 static struct device *char_dev = NULL;
 
@@ -24,8 +21,6 @@ static int char_major = 0;
 static int char_minor = 0;
 
 static dev_t dev;
-
-module_param(buf_size, long, 0);
 
 static struct char_device *my_dev;
 
@@ -44,26 +39,63 @@ static int char_release(struct inode *inode, struct file *filp)
 {
 	return 0;
 }
+struct data_capsule *char_follow(struct char_device *dev, int n)
+{
+	struct data_capsule *dc = dev->data;
 
+	if (!dc) {
+		dc = dev->data = kmalloc(sizeof(struct data_capsule), GFP_KERNEL);
+		if (dc == NULL)
+			return NULL;
+		memset(dc, 0, sizeof(struct data_capsule));
+	}
+	while (n--) {
+		if (!dc->next) {
+			dc->next = kmalloc(sizeof(struct data_capsule), GFP_KERNEL);
+			if (dc->next == NULL)
+				return NULL;
+			memset(dc->next, 0, sizeof(struct data_capsule));
+		}
+		dc = dc->next;
+		continue;
+	}
+	return dc;
+}
 static ssize_t char_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
 	struct char_device *cl_dev;
 	cl_dev = (struct char_device *) filp->private_data; 
-
+	struct data_capsule *dc;
+	int cc = cl_dev->capsule_capacity, cs = cl_dev->capsule_strength;
+	int itemsize = cc * cs;
+	int item, s_pos, q_pos, rest;
 	ssize_t ret = 0;
 	*f_pos = 0;
 	
 	printk("The count is %d, offset is %d", count, *f_pos);
 
-	if (*f_pos >= cl_dev->buf_size) {
+	
+	if (*f_pos >= cl_dev->size) {
 		printk(KERN_WARNING" offest is out of bounds\n");
 		return ret;
 	}
 
-	if (*f_pos + count > cl_dev->buf_size) 
-		count = cl_dev->buf_size - *f_pos;
-	
-	if (copy_to_user(buf, &(cl_dev->message[*f_pos]), count) != 0) {
+	if (*f_pos + count > cl_dev->size) 
+		count = cl_dev->size - *f_pos;
+
+	item = (long)*f_pos / itemsize;
+	rest = (long)*f_pos % itemsize;
+	s_pos = rest / cc;
+	q_pos = rest % cc;
+
+	dc = char_follow(cl_dev, item);
+
+	if (dc == NULL || ! dc->data || !dc->data[s_pos])
+		return -1;
+
+	if (count > cc - cs)
+		count = cc - cs;
+	if (copy_to_user(buf, dc->data[s_pos], count)) {
 		ret = -EFAULT;
 		return ret;
 	}
@@ -78,28 +110,43 @@ static ssize_t char_write(struct file *filp, const char *__user buf, size_t coun
 {
 	struct char_device *cl_dev;
 	cl_dev = (struct char_device *) filp->private_data; 
-
+	struct data_capsule *dc;
+	int cc = cl_dev->capsule_capacity, cs = cl_dev->capsule_strength;
+	int itemsize = cc * cs;
+	int item, s_pos, q_pos, rest;
 	ssize_t ret = 0;
 
 	printk("The count is %d, offset is %d", count, *f_pos);
 
-	if (!cl_dev->message) {
-		cl_dev->message = (void *)kmalloc(buf_size * sizeof(char), GFP_KERNEL);
-		if (!cl_dev->message)
+	item = (long)*f_pos / itemsize;
+	rest = (long)*f_pos % itemsize;
+	s_pos = rest / cc;
+	q_pos = rest % cc;
+
+	dc = char_follow(cl_dev, item);
+
+	if (dc == NULL) {
+		printk("Data capsule is NULL\n");
+		return -1;
+	}
+	if (!dc->data) {
+		dc->data = kmalloc(cs * sizeof(char *), GFP_KERNEL);
+		if (!dc->data)
 			return -ENOMEM;
-		memset(cl_dev->message, 0, buf_size*(sizeof(char)));
+		memset(dc->data, 0, cs* sizeof(char *));
 	}
+
+	if(!dc->data[s_pos]) {
+		dc->data[s_pos] = kmalloc(cc, GFP_KERNEL);
+		if (!dc->data[s_pos])
+			return -ENOMEM;
+	}
+
+	if (count > cc - cs)
+		count = cc - cs;
 	
-	if (*f_pos >= cl_dev->buf_size) {
-		printk(KERN_WARNING" offest is out of bounds\n");
-		return ret;
-	}
-
-	if (*f_pos + count > cl_dev->buf_size) 
-		count = cl_dev->buf_size - *f_pos;
-
-
-	if(copy_from_user(cl_dev->message[*f_pos], buf, count) != 0)
+	
+	if(copy_from_user(dc->data[s_pos], buf, count))
 	{
 		ret = -EFAULT;
 		return ret;
@@ -111,15 +158,43 @@ static ssize_t char_write(struct file *filp, const char *__user buf, size_t coun
 	printk("The f_pos is %d\n", *f_pos);
 	ret = count;
 
+	if (cl_dev->size < *f_pos)
+		cl_dev->size = *f_pos;
+
 	return ret;
 		
+}
+
+loff_t char_seek(struct file *fp, loff_t off, int whence)
+{
+	struct char_device *dev = fp->private_data;
+	loff_t newposs;
+	switch(whence) {
+	case 0:
+		newposs = off;
+		break;
+	case 1:
+		newposs = fp->f_pos + off;
+		break;
+	case 2:
+		newposs = dev->size + off;
+		break;
+		
+	default:
+		return -EINVAL;
+	}
+	if (newposs < 0)
+		return -EINVAL;
+	fp->f_pos = newposs;
+	return newposs;
 }
 
 struct file_operations my_char_fops = {
 	.open = char_open,
 	.read = char_read,
 	.write = char_write,
-	.release = char_release
+	.release = char_release,
+	.llseek = char_seek
 };
 
 	
@@ -162,17 +237,17 @@ static int  char_init(void)
 	devno = MKDEV(char_major, char_minor);
 
 	cdev_init(&my_dev->cdev, &my_char_fops);
-
+	
 	my_dev->cdev.owner = THIS_MODULE;
 	my_dev->cdev.ops = &my_char_fops;
-
+	my_dev->capsule_capacity = CC;
+	my_dev->capsule_strength = CS;
 	res = cdev_add(&my_dev->cdev, devno, 1);
 
 	if (res) {
 		printk(KERN_WARNING" UNABLE TO ADD THE CHAR DEVICE\n");
 		return res;
 	}
-	my_dev->buf_size = buf_size;
 	char_dev = device_create(char_class, NULL, devno, NULL, DEV_NAME);
 
 	if (IS_ERR(char_dev)) {

@@ -26,10 +26,10 @@ int main(void)
 
 	read_bytes = read(fd1, read_buf, sizeof(read_buf));
 
-	if (read_bytes > write_bytes || read_bytes == 0) {
-		printf("its not writing correctly dude\n");
-		return -1;
-	}
+	/* if (read_bytes > write_bytes || read_bytes == 0) { */
+	/* 	printf("its not writing correctly dude\n"); */
+	/* 	return -1; */
+	/* } */
 
 	printf("%s \n", read_buf);
 	return 0;
